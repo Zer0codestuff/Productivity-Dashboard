@@ -2,6 +2,8 @@
 
 Una dashboard gamificata per monitorare progressi, abitudini, energia giornaliera e journal personale in un’unica interfaccia React.
 
+![Screenshot del sito](./Screenshot%202026-03-19%20at%2017-13-00%20Momentum%20Journal.png)
+
 ## Cosa Fa
 
 Il progetto mette insieme in modo visivo alcuni blocchi chiave di produttivita:
