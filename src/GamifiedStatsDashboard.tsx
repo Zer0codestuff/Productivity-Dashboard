@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -11,12 +11,6 @@ import {
   Checkbox,
   Input,
   Label,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   Textarea,
   Tooltip,
   TooltipContent,
@@ -48,474 +42,40 @@ import {
   ChevronUp,
   Download,
   Flame,
-  Flower2,
   Heart,
   LayoutDashboard,
   LineChart as LineChartIcon,
-  Leaf,
   Minus,
-  MoonStar,
   Palette,
   PenLine,
   Plus,
   PlusCircle,
   Settings,
-  Snowflake,
-  Sparkles,
-  SunMedium,
   Target,
   Trash2,
   Upload,
+  User,
   Zap,
 } from "lucide-react";
-
-/* ---------- Helpers ---------- */
-const colorThemes = {
-  white: { primary: "0 0% 98%", primaryForeground: "222.2 47.4% 11.2%" },
-  violet: { primary: "262.1 83.3% 57.8%", primaryForeground: "210 20% 98%" },
-  green: { primary: "142.1 76.2% 36.3%", primaryForeground: "145.1 80% 98%" },
-  orange: { primary: "24.6 95% 53.1%", primaryForeground: "20 14.3% 97.3%" },
-  rose: { primary: "346.8 77.2% 49.8%", primaryForeground: "355.7 100% 97.3%" },
-  blue: { primary: "221.2 83.2% 53.3%", primaryForeground: "210 40% 98%" },
-};
-
-const DASHBOARD_STORAGE_KEY = "gamified-dashboard-v2";
-const DASHBOARD_DATA_VERSION = 2;
-const MAX_HISTORY_POINTS = 30;
-const THEME_MODES = ["dark", "light"];
-const avatarFallback =
-  "https://i.pinimg.com/originals/01/05/b5/0105b5a8865355f0c551606c4fee9120.jpg";
-const defaultMotivation =
-  "Fear is your ego. Turn resistance into effortlessness. Dare to succeed...";
-
-const parseDateInput = (input) => {
-  if (input instanceof Date) {
-    return Number.isNaN(input.getTime()) ? null : new Date(input);
-  }
-
-  if (typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input)) {
-    const [year, month, day] = input.split("-").map(Number);
-    const date = new Date(year, month - 1, day, 12, 0, 0, 0);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  const date = new Date(input);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-const toDateKey = (input) => {
-  const date = parseDateInput(input);
-  if (!date) return "";
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const isToday = (dateString) => {
-  if (!dateString) return false;
-  return toDateKey(dateString) === toDateKey(new Date());
-};
-
-const isYesterday = (dateString) => {
-  if (!dateString) return false;
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return toDateKey(dateString) === toDateKey(yesterday);
-};
-
-const formatShortDay = (date) =>
-  date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
-
-const getSeasonArcLabel = (date) => {
-  const month = date.getMonth();
-
-  if (month >= 2 && month <= 4) return "Spring Arc";
-  if (month >= 5 && month <= 7) return "Summer Arc";
-  if (month >= 8 && month <= 10) return "Autumn Arc";
-
-  return "Winter Arc";
-};
-
-const getSeasonArcIcon = (date) => {
-  const month = date.getMonth();
-
-  if (month >= 2 && month <= 4) return Flower2;
-  if (month >= 5 && month <= 7) return SunMedium;
-  if (month >= 8 && month <= 10) return Leaf;
-
-  return Snowflake;
-};
-
-const buildEnergyHistoryEntry = (dateInput, energy) => {
-  const date = parseDateInput(dateInput) ?? new Date();
-  const entry = {
-    dateKey: toDateKey(date),
-    day: formatShortDay(date),
-  };
-
-  energy.forEach((metric) => {
-    entry[metric.key] = clamp(metric.value, 0, 10);
-  });
-
-  return entry;
-};
-
-const buildInitialEnergyHistory = (energy) => [buildEnergyHistoryEntry(new Date(), energy)];
-
-const syncTodayHistory = (history, energy) => {
-  const today = new Date();
-  const todayKey = toDateKey(today);
-  const todayEntry = buildEnergyHistoryEntry(today, energy);
-
-  const existingIndex = history.findIndex((entry) => entry.dateKey === todayKey);
-
-  if (existingIndex >= 0) {
-    return history.map((entry, index) =>
-      index === existingIndex ? todayEntry : entry
-    );
-  }
-
-  return [...history.slice(-(MAX_HISTORY_POINTS - 1)), todayEntry];
-};
-
-const formatJournalDate = (input) =>
-  (parseDateInput(input) ?? new Date()).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-const calculateJournalStreak = (entries) => {
-  const uniqueDates = [...new Set(entries.map((entry) => entry.dateKey))].sort().reverse();
-  if (uniqueDates.length === 0) return 0;
-
-  let streak = 0;
-  const cursor = parseDateInput(new Date());
-  cursor?.setHours(12, 0, 0, 0);
-
-  for (const dateKey of uniqueDates) {
-    const target = parseDateInput(dateKey);
-    if (!cursor || !target) continue;
-    target.setHours(12, 0, 0, 0);
-
-    const diff = Math.round(
-      (cursor.getTime() - target.getTime()) / (24 * 60 * 60 * 1000)
-    );
-
-    if (diff === 0 || (streak === 0 && diff === 1) || diff === 1) {
-      streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
-      continue;
-    }
-
-    break;
-  }
-
-  return streak;
-};
-
-const calculateHabitStreak = (completedDates) => {
-  const uniqueDates = [...new Set((completedDates ?? []).map((dateKey) => toDateKey(dateKey)).filter(Boolean))]
-    .sort()
-    .reverse();
-
-  if (uniqueDates.length === 0) return 0;
-
-  const todayKey = toDateKey(new Date());
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = toDateKey(yesterday);
-
-  if (uniqueDates[0] !== todayKey && uniqueDates[0] !== yesterdayKey) {
-    return 0;
-  }
-
-  let streak = 0;
-  let cursor = parseDateInput(uniqueDates[0]);
-  if (!cursor) return 0;
-
-  for (const dateKey of uniqueDates) {
-    if (dateKey !== toDateKey(cursor)) {
-      break;
-    }
-
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  return streak;
-};
-
-const getJournalXpBonus = (streak) => {
-  if (streak >= 14) return 15;
-  if (streak >= 7) return 10;
-  if (streak >= 3) return 5;
-  return 0;
-};
-
-const createDefaultEnergy = () => [
-  { key: "Willpower", value: 5 },
-  { key: "Health", value: 7 },
-  { key: "Mood", value: 6 },
-];
-
-const createCompletedDates = (endDateInput, streakLength) => {
-  const endDate = parseDateInput(endDateInput);
-  if (!endDate || streakLength <= 0) return [];
-
-  return Array.from({ length: streakLength }, (_, index) => {
-    const date = new Date(endDate);
-    date.setDate(date.getDate() - (streakLength - 1 - index));
-    return toDateKey(date);
-  });
-};
-
-const createDefaultHabits = () => {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayIso = yesterday.toISOString();
-
-  return [
-    {
-      id: 1,
-      name: "Exercise",
-      streak: 5,
-      lastCompleted: yesterdayIso,
-      completedDates: createCompletedDates(yesterday, 5),
-    },
-    {
-      id: 2,
-      name: "Read 10 pages",
-      streak: 12,
-      lastCompleted: yesterdayIso,
-      completedDates: createCompletedDates(yesterday, 12),
-    },
-    {
-      id: 3,
-      name: "Meditate 5 mins",
-      streak: 0,
-      lastCompleted: null,
-      completedDates: [],
-    },
-  ];
-};
-
-const createDefaultDashboardData = () => {
-  const energy = createDefaultEnergy();
-
-  return {
-    profileName: "Ash",
-    avatarSrc: avatarFallback,
-    themeMode: "dark",
-    primaryColorKey: "white",
-    level: 1,
-    xp: 0,
-    xpToNext: 100,
-    radarStats: [
-      { id: 1, area: "Physical", value: 80 },
-      { id: 2, area: "Psyche", value: 90 },
-      { id: 3, area: "Intell", value: 75 },
-      { id: 4, area: "Spiritual", value: 70 },
-      { id: 5, area: "Core", value: 85 },
-    ],
-    energy,
-    energyHistory: buildInitialEnergyHistory(energy),
-    motivation: defaultMotivation,
-    habits: createDefaultHabits(),
-    journalEntries: [],
-    journalRewardedDates: [],
-  };
-};
-
-const sanitizeNumber = (value, fallback, min, max) => {
-  if (typeof value !== "number" || Number.isNaN(value)) return fallback;
-  return clamp(value, min, max);
-};
-
-const sanitizeString = (value, fallback, maxLength = 120) => {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, maxLength) : fallback;
-};
-
-const sanitizeEnergy = (value, fallbackEnergy) =>
-  fallbackEnergy.map((metric) => {
-    const importedMetric =
-      Array.isArray(value) &&
-      value.find((entry) => entry && typeof entry === "object" && entry.key === metric.key);
-
-    return {
-      key: metric.key,
-      value: sanitizeNumber(importedMetric?.value, metric.value, 0, 10),
-    };
-  });
-
-const sanitizeRadarStats = (value, fallbackStats) => {
-  if (!Array.isArray(value)) return fallbackStats;
-
-  const sanitized = value
-    .map((entry, index) => {
-      if (!entry || typeof entry !== "object") return null;
-      const area = sanitizeString(entry.area, "", 24);
-      if (!area) return null;
-
-      return {
-        id: typeof entry.id === "number" ? entry.id : Date.now() + index,
-        area,
-        value: sanitizeNumber(entry.value, 50, 0, 100),
-      };
-    })
-    .filter(Boolean);
-
-  return sanitized.length > 0 ? sanitized : fallbackStats;
-};
-
-const sanitizeEnergyHistory = (value, energy) => {
-  if (!Array.isArray(value)) {
-    return buildInitialEnergyHistory(energy);
-  }
-
-  const entriesByDate = new Map();
-
-  value.forEach((entry) => {
-    if (!entry || typeof entry !== "object") return;
-    const dateKey = toDateKey(entry.dateKey);
-    if (!dateKey) return;
-
-    const normalizedEntry = buildEnergyHistoryEntry(dateKey, energy);
-    energy.forEach((metric) => {
-      normalizedEntry[metric.key] = sanitizeNumber(entry[metric.key], metric.value, 0, 10);
-    });
-    entriesByDate.set(dateKey, normalizedEntry);
-  });
-
-  const sanitized = [...entriesByDate.values()]
-    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
-    .slice(-MAX_HISTORY_POINTS);
-
-  return sanitized.length > 0 ? sanitized : buildInitialEnergyHistory(energy);
-};
-
-const sanitizeJournalEntries = (value) => {
-  if (!Array.isArray(value)) return [];
-
-  const entriesByDate = new Map();
-
-  value.forEach((entry, index) => {
-    if (!entry || typeof entry !== "object") return;
-
-    const dateKey = toDateKey(entry.dateKey || entry.createdAt);
-    const createdAtDate = parseDateInput(entry.createdAt || entry.dateKey);
-    const title = sanitizeString(entry.title, "", 120);
-    const content = sanitizeString(entry.content, "", 4000);
-
-    if (!dateKey || !createdAtDate || !title || !content) return;
-
-    entriesByDate.set(dateKey, {
-      id: typeof entry.id === "number" ? entry.id : Date.now() + index,
-      dateKey,
-      createdAt: createdAtDate.toISOString(),
-      title,
-      content,
-    });
-  });
-
-  return [...entriesByDate.values()].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-};
-
-const sanitizeHabit = (habit, index) => {
-  if (!habit || typeof habit !== "object") return null;
-
-  const name = sanitizeString(habit.name, "", 60);
-  if (!name) return null;
-
-  let completedDates = [];
-  if (Array.isArray(habit.completedDates)) {
-    completedDates = [...new Set(habit.completedDates.map((dateKey) => toDateKey(dateKey)).filter(Boolean))].sort();
-  } else {
-    const fallbackLastCompleted = parseDateInput(habit.lastCompleted);
-    const fallbackStreak = sanitizeNumber(habit.streak, 0, 0, 365);
-    completedDates = createCompletedDates(fallbackLastCompleted, fallbackStreak);
-  }
-
-  const streak = calculateHabitStreak(completedDates);
-  const lastCompleted = completedDates.length > 0
-    ? (parseDateInput(completedDates[completedDates.length - 1]) ?? new Date()).toISOString()
-    : null;
-
-  return {
-    id: typeof habit.id === "number" ? habit.id : Date.now() + index,
-    name,
-    streak,
-    lastCompleted,
-    completedDates,
-  };
-};
-
-const sanitizeHabits = (value, fallbackHabits) => {
-  if (!Array.isArray(value)) return fallbackHabits;
-
-  const sanitized = value.map(sanitizeHabit).filter(Boolean);
-  return sanitized.length > 0 ? sanitized : fallbackHabits;
-};
-
-const sanitizeRewardedDates = (value, journalEntries) => {
-  if (Array.isArray(value)) {
-    const sanitized = [...new Set(value.map((dateKey) => toDateKey(dateKey)).filter(Boolean))].sort();
-    if (sanitized.length > 0) return sanitized;
-  }
-
-  return [...new Set(journalEntries.map((entry) => entry.dateKey))].sort();
-};
-
-const sanitizeDashboardSnapshot = (value) => {
-  const fallback = createDefaultDashboardData();
-  if (!value || typeof value !== "object") {
-    return fallback;
-  }
-
-  const energy = sanitizeEnergy(value.energy, fallback.energy);
-  const journalEntries = sanitizeJournalEntries(value.journalEntries);
-  const habits = sanitizeHabits(value.habits, fallback.habits);
-
-  return {
-    profileName: sanitizeString(value.profileName, fallback.profileName, 32),
-    avatarSrc: typeof value.avatarSrc === "string" ? value.avatarSrc : fallback.avatarSrc,
-    themeMode: THEME_MODES.includes(value.themeMode) ? value.themeMode : fallback.themeMode,
-    primaryColorKey: colorThemes[value.primaryColorKey]
-      ? value.primaryColorKey
-      : fallback.primaryColorKey,
-    level: sanitizeNumber(value.level, fallback.level, 1, 999),
-    xp: sanitizeNumber(value.xp, fallback.xp, 0, 999999),
-    xpToNext: sanitizeNumber(value.xpToNext, fallback.xpToNext, 1, 999999),
-    radarStats: sanitizeRadarStats(value.radarStats, fallback.radarStats),
-    energy,
-    energyHistory: syncTodayHistory(sanitizeEnergyHistory(value.energyHistory, energy), energy),
-    motivation: sanitizeString(value.motivation, fallback.motivation, 280),
-    habits,
-    journalEntries,
-    journalRewardedDates: sanitizeRewardedDates(value.journalRewardedDates, journalEntries),
-  };
-};
-
-const readStoredDashboardData = () => {
-  if (typeof window === "undefined") return createDefaultDashboardData();
-
-  try {
-    const raw = window.localStorage.getItem(DASHBOARD_STORAGE_KEY);
-    if (!raw) return createDefaultDashboardData();
-    return sanitizeDashboardSnapshot(JSON.parse(raw));
-  } catch {
-    return createDefaultDashboardData();
-  }
-};
+import {
+  buildCalendarDays,
+  calculateHabitStreak,
+  calculateJournalStreak,
+  colorThemes,
+  createExportSnapshot,
+  formatJournalDate,
+  getJournalXpBonus,
+  getSeasonArcIcon,
+  getSeasonArcLabel,
+  isToday,
+  parseDateInput,
+  readStoredDashboardData,
+  sanitizeDashboardSnapshot,
+  syncTodayHistory,
+  toDateKey,
+  writeStoredDashboardData,
+  type DashboardData,
+} from "./features/dashboard/dashboard-data";
 
 const energyIconMap = {
   Willpower: Zap,
@@ -523,27 +83,43 @@ const energyIconMap = {
   Mood: Flame,
 };
 
-const buildCalendarDays = (monthDate) => {
-  const year = monthDate.getFullYear();
-  const month = monthDate.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startOffset = (firstDay.getDay() + 6) % 7;
-  const totalCells = Math.ceil((startOffset + lastDay.getDate()) / 7) * 7;
-
-  return Array.from({ length: totalCells }, (_, index) => {
-    const dayNumber = index - startOffset + 1;
-    if (dayNumber < 1 || dayNumber > lastDay.getDate()) {
-      return null;
-    }
-
-    const date = new Date(year, month, dayNumber);
-    return {
-      label: dayNumber,
-      dateKey: toDateKey(date),
-    };
-  });
+/** Willpower = giallo, Health = rosso, Mood = arancione (stesso schema nel grafico). */
+const ENERGY_METRIC_COLORS: Record<string, string> = {
+  Willpower: "#facc15",
+  Health: "#ef4444",
+  Mood: "#f97316",
 };
+const themeColorKeys = Object.keys(colorThemes) as Array<keyof typeof colorThemes>;
+const weekDayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+/** Streak 0 = muted; da 1 in su arancione che tende al rosso all'aumentare dello streak (hue ~32 → 0). */
+function getStreakTextStyle(streak: number): React.CSSProperties {
+  if (streak <= 0) {
+    return { color: "hsl(var(--muted-foreground))" };
+  }
+  const t = Math.min(streak / 20, 1);
+  const hue = 32 - t * 32;
+  return { color: `hsl(${hue} 88% 54%)` };
+}
+
+function getStreakBadgeStyle(streak: number): React.CSSProperties {
+  if (streak <= 0) {
+    return {
+      backgroundColor: "hsl(var(--muted) / 0.5)",
+      color: "hsl(var(--muted-foreground))",
+      borderColor: "hsl(var(--border))",
+    };
+  }
+  const t = Math.min(streak / 20, 1);
+  const hue = 32 - t * 32;
+  return {
+    backgroundColor: `hsl(${hue} 45% 18%)`,
+    color: `hsl(${hue} 92% 88%)`,
+    borderColor: `hsl(${hue} 55% 35%)`,
+  };
+}
 
 function StepperControl({
   value,
@@ -554,7 +130,10 @@ function StepperControl({
   ariaLabel,
   compact = false,
 }) {
-  const buttonSize = compact ? "h-8 w-8" : "h-9 w-9";
+  /** Touch-friendly on small screens; compact size from `sm` up (44px min tap target on mobile). */
+  const buttonSize = compact
+    ? "h-11 w-11 min-h-[44px] min-w-[44px] sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0"
+    : "h-11 w-11 min-h-[44px] min-w-[44px] sm:h-9 sm:w-9 sm:min-h-0 sm:min-w-0";
   const valueClass = compact ? "min-w-[2.5rem] text-xs" : "min-w-[3rem] text-sm";
 
   return (
@@ -603,6 +182,10 @@ function GamifiedStatsDashboard() {
   const [avatarSrc, setAvatarSrc] = useState(initialData.avatarSrc);
   const [profileName, setProfileName] = useState(initialData.profileName);
   const [activePage, setActivePage] = useState("dashboard");
+  /** Mobile-only: which dashboard region is visible below `lg` (desktop shows all). */
+  const [mobileDashboardTab, setMobileDashboardTab] = useState<
+    "character" | "stats" | "habits" | "journal"
+  >("character");
   const [themeMode, setThemeMode] = useState(initialData.themeMode);
 
   // Radar stats
@@ -628,6 +211,13 @@ function GamifiedStatsDashboard() {
   // Habit tracker
   const [habits, setHabits] = useState(initialData.habits);
   const [newHabitName, setNewHabitName] = useState("");
+  const [selectedHabitId, setSelectedHabitId] = useState(
+    () => initialData.habits[0]?.id ?? null
+  );
+  const [habitCalendarMonth, setHabitCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [journalEntries, setJournalEntries] = useState(initialData.journalEntries);
   const [journalRewardedDates, setJournalRewardedDates] = useState(
     initialData.journalRewardedDates
@@ -642,6 +232,41 @@ function GamifiedStatsDashboard() {
   });
   const [selectedJournalDate, setSelectedJournalDate] = useState(() =>
     toDateKey(new Date())
+  );
+  const dashboardData = useMemo(
+    () =>
+      ({
+        profileName,
+        avatarSrc,
+        themeMode,
+        primaryColorKey,
+        level,
+        xp,
+        xpToNext,
+        radarStats,
+        energy,
+        energyHistory,
+        motivation,
+        habits,
+        journalEntries,
+        journalRewardedDates,
+      }) satisfies DashboardData,
+    [
+      avatarSrc,
+      energy,
+      energyHistory,
+      habits,
+      journalEntries,
+      journalRewardedDates,
+      level,
+      motivation,
+      primaryColorKey,
+      profileName,
+      radarStats,
+      themeMode,
+      xp,
+      xpToNext,
+    ]
   );
 
   /* ---------- Effects ---------- */
@@ -689,60 +314,18 @@ function GamifiedStatsDashboard() {
       return;
     }
 
-    if (selectedJournalDate === toDateKey(new Date())) {
-      setJournalForm({ title: "", content: "" });
-    }
+    setJournalForm({ title: "", content: "" });
   }, [journalEntries, selectedJournalDate]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const snapshot = {
-      version: DASHBOARD_DATA_VERSION,
-      profileName,
-      avatarSrc,
-      themeMode,
-      primaryColorKey,
-      level,
-      xp,
-      xpToNext,
-      radarStats,
-      energy,
-      energyHistory,
-      motivation,
-      habits,
-      journalEntries,
-      journalRewardedDates,
-      savedAt: new Date().toISOString(),
-    };
-
-    try {
-      window.localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(snapshot));
-    } catch {
-      // Ignore storage quota errors and keep the app usable.
-    }
-  }, [
-    avatarSrc,
-    energy,
-    energyHistory,
-    habits,
-    journalEntries,
-    journalRewardedDates,
-    level,
-    motivation,
-    primaryColorKey,
-    profileName,
-    radarStats,
-    themeMode,
-    xp,
-    xpToNext,
-  ]);
+    writeStoredDashboardData(dashboardData);
+  }, [dashboardData]);
 
   /* ---------- XP Logic ---------- */
 
   const gainExperience = (amount) => {
     if (isNaN(amount) || amount <= 0) return;
-    let currentXp = xp;
+    const currentXp = xp;
     let currentLevel = level;
     let threshold = xpToNext;
 
@@ -784,24 +367,7 @@ function GamifiedStatsDashboard() {
   };
 
   const exportData = () => {
-    const snapshot = {
-      version: DASHBOARD_DATA_VERSION,
-      profileName,
-      avatarSrc,
-      themeMode,
-      primaryColorKey,
-      level,
-      xp,
-      xpToNext,
-      radarStats: sanitizeRadarStats(radarStats, createDefaultDashboardData().radarStats),
-      energy,
-      energyHistory,
-      motivation,
-      habits,
-      journalEntries,
-      journalRewardedDates,
-      exportedAt: new Date().toISOString(),
-    };
+    const snapshot = createExportSnapshot(dashboardData);
 
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
       type: "application/json",
@@ -834,6 +400,7 @@ function GamifiedStatsDashboard() {
         setEnergyHistory(parsed.energyHistory);
         setMotivation(parsed.motivation);
         setHabits(parsed.habits);
+        setSelectedHabitId(parsed.habits[0]?.id ?? null);
         setJournalEntries(parsed.journalEntries);
         setJournalRewardedDates(parsed.journalRewardedDates);
         const todayKey = toDateKey(new Date());
@@ -849,16 +416,6 @@ function GamifiedStatsDashboard() {
     };
     reader.readAsText(file);
     event.target.value = "";
-  };
-
-  const updateRadarVal = (id, raw) => {
-    const val = parseInt(raw, 10);
-    if (isNaN(val) || val < 0 || val > 100) return;
-    setRadarStats((prev) =>
-      prev.map((stat) =>
-        stat.id === id ? { ...stat, value: val } : stat
-      )
-    );
   };
 
   const removeStat = (id) => {
@@ -881,14 +438,6 @@ function GamifiedStatsDashboard() {
     ]);
     setNewStatName("");
     setNewStatVal("");
-  };
-
-  const changeEnergy = (index, raw) => {
-    const val = parseInt(raw, 10);
-    if (isNaN(val) || val < 0 || val > 10) return;
-    setEnergy((prev) =>
-      prev.map((entry, i) => (i === index ? { ...entry, value: val } : entry))
-    );
   };
 
   const nudgeEnergy = (index, nextValue) => {
@@ -915,25 +464,31 @@ function GamifiedStatsDashboard() {
       completedDates: [],
     };
     setHabits((prev) => [...prev, newHabit]);
+    setSelectedHabitId((current) => current ?? newHabit.id);
     setNewHabitName("");
   };
 
-  const toggleHabitCompletion = (id) => {
+  const toggleHabitDate = (id, dateInput) => {
+    const targetDateKey = toDateKey(dateInput);
+    if (!targetDateKey) return;
+
     const todayKey = toDateKey(new Date());
     const targetHabit = habits.find((habit) => habit.id === id);
     if (!targetHabit) return;
 
-    const shouldCompleteToday = !targetHabit.completedDates?.includes(todayKey);
+    const shouldAwardXp =
+      targetDateKey === todayKey &&
+      !targetHabit.completedDates?.includes(targetDateKey);
 
     setHabits((prev) =>
       prev.map((habit) => {
         if (habit.id !== id) return habit;
 
         const completedDatesSet = new Set(habit.completedDates ?? []);
-        if (completedDatesSet.has(todayKey)) {
-          completedDatesSet.delete(todayKey);
+        if (completedDatesSet.has(targetDateKey)) {
+          completedDatesSet.delete(targetDateKey);
         } else {
-          completedDatesSet.add(todayKey);
+          completedDatesSet.add(targetDateKey);
         }
 
         const completedDates = [...completedDatesSet].sort();
@@ -950,13 +505,21 @@ function GamifiedStatsDashboard() {
       })
     );
 
-    if (shouldCompleteToday) {
+    if (shouldAwardXp) {
       gainExperience(5);
     }
   };
 
+  const toggleHabitCompletion = (id) => {
+    toggleHabitDate(id, new Date());
+  };
+
   const deleteHabit = (id) => {
-    setHabits((prev) => prev.filter((h) => h.id !== id));
+    const remainingHabits = habits.filter((habit) => habit.id !== id);
+    setHabits(remainingHabits);
+    if (selectedHabitId === id) {
+      setSelectedHabitId(remainingHabits[0]?.id ?? null);
+    }
   };
 
   const saveJournalEntry = (event) => {
@@ -969,11 +532,12 @@ function GamifiedStatsDashboard() {
     const now = new Date();
     const todayKey = toDateKey(now);
     const targetDateKey = selectedJournalDate || todayKey;
-    const existingEntry = journalEntries.find((entry) => entry.dateKey === targetDateKey);
 
-    if (existingEntry) {
-      setJournalEntries((prev) =>
-        prev.map((entry) =>
+    setJournalEntries((prev) => {
+      const existingEntry = prev.find((entry) => entry.dateKey === targetDateKey);
+
+      if (existingEntry) {
+        return prev.map((entry) =>
           entry.dateKey === targetDateKey
             ? {
                 ...entry,
@@ -982,9 +546,9 @@ function GamifiedStatsDashboard() {
                 createdAt: now.toISOString(),
               }
             : entry
-        )
-      );
-    } else {
+        );
+      }
+
       const nextEntry = {
         id: Date.now(),
         dateKey: targetDateKey,
@@ -992,18 +556,21 @@ function GamifiedStatsDashboard() {
         title,
         content,
       };
-      const nextEntries = [nextEntry, ...journalEntries].sort(
+      const nextEntries = [nextEntry, ...prev].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-      setJournalEntries(nextEntries);
 
-      if (!journalRewardedDates.includes(targetDateKey)) {
-        const streak = calculateJournalStreak(nextEntries);
-        const bonusXp = getJournalXpBonus(streak);
-        gainExperience(15 + bonusXp);
-        setJournalRewardedDates((prev) => [...new Set([...prev, targetDateKey])].sort());
-      }
-    }
+      queueMicrotask(() => {
+        setJournalRewardedDates((rewarded) => {
+          if (rewarded.includes(targetDateKey)) return rewarded;
+          const streak = calculateJournalStreak(nextEntries);
+          gainExperience(15 + getJournalXpBonus(streak));
+          return [...new Set([...rewarded, targetDateKey])].sort();
+        });
+      });
+
+      return nextEntries;
+    });
 
     const monthDate = parseDateInput(targetDateKey) ?? now;
     setSelectedJournalDate(targetDateKey);
@@ -1035,11 +602,17 @@ function GamifiedStatsDashboard() {
   /* ---------- Derived Data ---------- */
 
   const todayJournalDateKey = toDateKey(new Date());
-  const pointsRows = radarStats.map((stat) => ({
-    id: stat.id,
-    area: stat.area,
-    value: stat.value,
-  }));
+  const selectedHabit =
+    habits.find((habit) => habit.id === selectedHabitId) ?? habits[0] ?? null;
+  const selectedHabitCompletedDates = new Set(selectedHabit?.completedDates ?? []);
+  const selectedHabitCalendarDays = buildCalendarDays(habitCalendarMonth);
+  const selectedHabitMonthLabel = habitCalendarMonth.toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+  });
+  const selectedHabitMonthCount = selectedHabitCalendarDays.filter(
+    (day) => day && selectedHabitCompletedDates.has(day.dateKey)
+  ).length;
   const recentJournalEntries = [...journalEntries].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -1067,19 +640,25 @@ function GamifiedStatsDashboard() {
           className="hidden"
           onChange={handleAvatarChange}
         />
-        <div className="max-w-[1680px] mx-auto px-4 py-6 md:px-6 md:py-8 xl:px-8">
+        <div
+          className={[
+            "max-w-[1680px] mx-auto px-4 py-6 md:px-6 md:py-8 xl:px-8",
+            activePage === "dashboard" ? "max-lg:pb-24" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {/* Top title / breadcrumb */}
-          <div className="flex items-center justify-between mb-4 md:mb-6">
-            <div>
-              <h1 className="text-xl md:text-2xl xl:text-3xl font-semibold tracking-tight flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-primary" />
-                {profileName}&apos;s Dashboard
+          <div className="mb-4 flex flex-col gap-4 max-[479px]:items-stretch md:mb-6 min-[480px]:flex-row min-[480px]:items-start min-[480px]:justify-between">
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold tracking-tight md:text-2xl xl:text-3xl">
+                {`${profileName}'s Dashboard`}
               </h1>
               <p className="text-xs md:text-sm text-muted-foreground">
                 Track your stats, habits, and level up your character.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 max-[479px]:justify-between min-[480px]:w-auto">
               <Button
                 type="button"
                 variant={activePage === "dashboard" ? "default" : "ghost"}
@@ -1100,26 +679,26 @@ function GamifiedStatsDashboard() {
                 <Settings className="h-3.5 w-3.5" />
                 Settings
               </Button>
-              <Badge
-                variant="outline"
-                className="flex items-center gap-1 px-2 py-1 text-[0.65rem] md:text-xs"
-              >
-                <MoonStar className="h-3 w-3" />
-                {themeMode === "dark" ? "Dark mode" : "Light mode"}
-              </Badge>
             </div>
           </div>
 
           {activePage === "dashboard" ? (
           <>
-          <div className="flex flex-wrap items-start gap-4 md:gap-6 xl:gap-8">
-            {/* LEFT COLUMN */}
-            <section className="w-full sm:w-1/2 md:w-72 lg:w-80 xl:w-[23rem] flex flex-col gap-4 md:gap-5 xl:gap-6">
+          <div className="flex flex-col gap-4 md:gap-6 xl:gap-8 lg:flex-row lg:flex-nowrap lg:items-stretch">
+            {/* LEFT COLUMN — Character (profile, energy, theme, manage stats) */}
+            <section
+              className={[
+                "flex min-h-0 w-full flex-col gap-4 md:gap-5 xl:gap-6 lg:w-80 lg:shrink-0 xl:w-[23rem]",
+                mobileDashboardTab !== "character" ? "max-lg:hidden" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               {/* Profile Card */}
               <Card className="border border-border/70 bg-card/90 shadow-lg shadow-black/20 overflow-hidden">
                 <div className="relative">
-                  {/* Fixed-height avatar box */}
-                  <div className="h-60 md:h-72 xl:h-80 w-full overflow-hidden bg-muted">
+                  {/* Square avatar (lato = larghezza card) */}
+                  <div className="aspect-square w-full overflow-hidden bg-muted">
                     <img
                       src={avatarSrc}
                       alt="Avatar"
@@ -1192,25 +771,29 @@ function GamifiedStatsDashboard() {
                   {energy.map((entry, index) => (
                     <div
                       key={entry.key}
-                      className="flex flex-col gap-2 rounded-2xl bg-muted/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                      className="flex flex-row flex-nowrap items-center justify-between gap-2 rounded-xl bg-muted/50 px-2 py-2 sm:gap-3 sm:rounded-2xl sm:px-3"
                     >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-background border border-border/60">
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <span
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background"
+                          style={{
+                            color: ENERGY_METRIC_COLORS[entry.key] ?? "hsl(var(--primary))",
+                          }}
+                        >
                           {React.createElement(energyIconMap[entry.key] ?? Flame, {
                             className: "h-3 w-3",
                           })}
                         </span>
-                        <span className="text-sm font-medium">
-                          {entry.key}
-                        </span>
+                        <span className="truncate text-sm font-medium">{entry.key}</span>
                       </div>
-                      <div className="flex justify-end sm:justify-start">
+                      <div className="shrink-0 scale-90 origin-right sm:scale-100">
                         <StepperControl
                           value={entry.value}
                           min={0}
                           max={10}
                           onChange={(nextValue) => nudgeEnergy(index, nextValue)}
                           ariaLabel={entry.key}
+                          compact
                         />
                       </div>
                     </div>
@@ -1231,7 +814,7 @@ function GamifiedStatsDashboard() {
                 </CardHeader>
                 <CardContent className="px-4 pb-4 pt-2">
                   <div className="flex flex-wrap gap-2">
-                    {Object.keys(colorThemes).map((key) => {
+                    {themeColorKeys.map((key) => {
                       const selected = primaryColorKey === key;
                       return (
                         <button
@@ -1260,9 +843,9 @@ function GamifiedStatsDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Manage Stats (compact table-like layout) */}
-              <Card className="border border-border/70 bg-card/90 shadow-sm">
-                <CardHeader className="py-3 px-4">
+              {/* Manage Stats — grows with column so bottom aligns with center/right; XP-style bars */}
+              <Card className="flex min-h-0 flex-1 flex-col border border-border/70 bg-card/90 shadow-sm lg:min-h-[14rem]">
+                <CardHeader className="shrink-0 py-3 px-4">
                   <CardTitle className="text-sm flex items-center gap-2">
                     <BarChart2 className="h-4 w-4 text-primary" />
                     Manage Stats
@@ -1271,58 +854,71 @@ function GamifiedStatsDashboard() {
                     Fine-tune your character attributes (0-100).
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="px-3 pb-3 pt-2">
-                  <div className="space-y-1.5">
-                    {radarStats.map((stat) => (
-                      <div
-                        key={stat.id}
-                        className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 items-center text-xs px-1 py-1 rounded bg-muted/50"
-                      >
-                        <span className="truncate pl-1">{stat.area}</span>
-                        <div className="justify-self-end">
-                          <StepperControl
-                            value={stat.value}
-                            min={0}
-                            max={100}
-                            step={5}
-                            onChange={(nextValue) => nudgeRadarVal(stat.id, nextValue)}
-                            ariaLabel={stat.area}
-                            compact
-                          />
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => removeStat(stat.id)}
-                          aria-label={`Remove ${stat.area}`}
+                <CardContent className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-0">
+                  <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-0.5">
+                    {radarStats.map((stat) => {
+                      const pct = Math.min(100, Math.max(0, stat.value));
+                      return (
+                        <div
+                          key={stat.id}
+                          className="rounded-xl border border-border/40 bg-muted/40 px-2.5 py-2.5"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              {stat.area}
+                            </span>
+                            <StepperControl
+                              value={stat.value}
+                              min={0}
+                              max={100}
+                              step={1}
+                              onChange={(nextValue) => nudgeRadarVal(stat.id, nextValue)}
+                              ariaLabel={stat.area}
+                              compact
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => removeStat(stat.id)}
+                              aria-label={`Remove ${stat.area}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full bg-gradient-to-r from-primary via-primary/70 to-primary/40 transition-all duration-500"
+                              style={{
+                                width: `${pct}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                   <form
                     onSubmit={addStat}
-                    className="mt-2.5 grid grid-cols-[1.4fr_0.8fr_auto] gap-2 text-xs items-center"
+                    className="mt-3 shrink-0 grid grid-cols-[1.4fr_0.8fr_auto] gap-2 border-t border-border/50 pt-3 text-xs items-center"
                   >
                     <Input
                       placeholder="New stat"
                       value={newStatName}
                       onChange={(e) => setNewStatName(e.target.value)}
-                      className="h-7 bg-background"
+                      className="h-8 bg-background"
                     />
                     <Input
                       type="number"
                       placeholder="0-100"
                       value={newStatVal}
                       onChange={(e) => setNewStatVal(e.target.value)}
-                      className="h-7 bg-background text-center"
+                      className="h-8 bg-background text-center"
                     />
                     <Button
                       type="submit"
                       size="icon"
-                      className="h-7 w-7"
+                      className="h-8 w-8"
                       aria-label="Add stat"
                     >
                       <PlusCircle className="h-3.5 w-3.5" />
@@ -1332,8 +928,15 @@ function GamifiedStatsDashboard() {
               </Card>
             </section>
 
-            {/* CENTER COLUMN */}
-            <section className="w-full sm:w-1/2 md:flex-1 flex flex-col gap-4 md:gap-5 xl:gap-6 min-w-0">
+            {/* CENTER COLUMN — Stats (radar, arc, energy chart) */}
+            <section
+              className={[
+                "flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 md:gap-5 xl:gap-6",
+                mobileDashboardTab !== "stats" ? "max-lg:hidden" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               {/* Radar Card */}
               <Card className="border border-border/70 bg-card/90 shadow-lg flex flex-col">
                 <CardHeader className="px-4 pt-3 pb-2 md:pb-3">
@@ -1353,7 +956,7 @@ function GamifiedStatsDashboard() {
                   </div>
                 </CardHeader>
                 <CardContent className="px-2 pb-3 md:px-4 md:pb-4 flex flex-col gap-3">
-                  <div className="w-full h-[340px] lg:h-[420px] xl:h-[500px]">
+                  <div className="h-[220px] w-full sm:h-[280px] md:h-[340px] lg:h-[420px] xl:h-[500px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <RadarChart
                         data={radarStats}
@@ -1410,13 +1013,8 @@ function GamifiedStatsDashboard() {
                         className="flex items-center gap-2 rounded-full bg-muted/50 px-2 py-1"
                       >
                         <span
-                          className="h-2 w-2 rounded-full"
-                          style={{
-                            backgroundColor: isLightMode
-                              ? "hsl(var(--primary))"
-                              : "hsl(var(--foreground))",
-                            opacity: isLightMode ? 0.9 : 0.7,
-                          }}
+                          className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                          aria-hidden
                         />
                         <span className="font-medium">{stat.area}</span>
                         <span className="text-muted-foreground">
@@ -1482,8 +1080,8 @@ function GamifiedStatsDashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="border border-border/70 bg-card/90 shadow-sm flex flex-col">
-                <CardHeader className="px-4 pt-3 pb-2 md:pb-3">
+              <Card className="flex flex-1 flex-col border border-border/70 bg-card/90 shadow-sm">
+                <CardHeader className="shrink-0 px-4 pt-3 pb-2 md:pb-3">
                   <CardTitle className="text-sm md:text-base flex items-center gap-2">
                     <LineChartIcon className="h-4 w-4 text-primary" />
                     Daily Energy Chart
@@ -1492,8 +1090,12 @@ function GamifiedStatsDashboard() {
                     Today plus recent days for each daily metric.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="px-2 pb-3 md:px-4 md:pb-4">
-                  <div className="h-[300px] xl:h-[360px] w-full">
+                <CardContent className="flex min-h-0 flex-1 flex-col px-2 pb-3 md:px-4 md:pb-4">
+                  {/*
+                    Mobile: altezza fissa — Recharts con height 100% fallisce se il parent flex-1 non ha altezza calcolabile.
+                    Desktop: flex-1 come prima.
+                  */}
+                  <div className="h-[280px] w-full sm:h-[300px] lg:h-auto lg:min-h-[260px] lg:flex-1 lg:min-h-0 xl:min-h-[320px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart
                         data={energyHistory}
@@ -1536,27 +1138,30 @@ function GamifiedStatsDashboard() {
                         <Line
                           type="monotone"
                           dataKey="Willpower"
-                          stroke="hsl(var(--primary))"
+                          name="Willpower"
+                          stroke={ENERGY_METRIC_COLORS.Willpower}
                           strokeWidth={2.8}
-                          dot={{ r: 2.5, fill: "hsl(var(--primary))" }}
+                          dot={{ r: 2.5, fill: ENERGY_METRIC_COLORS.Willpower }}
                           activeDot={{ r: 4 }}
                         />
                         <Line
                           type="monotone"
                           dataKey="Health"
-                          stroke="hsl(var(--primary))"
-                          strokeOpacity={0.72}
-                          strokeWidth={2.4}
-                          dot={{ r: 2.5, fill: "hsl(var(--primary))", fillOpacity: 0.72 }}
+                          name="Health"
+                          stroke={ENERGY_METRIC_COLORS.Health}
+                          strokeWidth={2.6}
+                          dot={{ r: 2.5, fill: ENERGY_METRIC_COLORS.Health }}
+                          activeDot={{ r: 4 }}
                         />
                         <Line
                           type="monotone"
                           dataKey="Mood"
-                          stroke="hsl(var(--primary))"
-                          strokeOpacity={0.42}
-                          strokeWidth={2}
-                          dot={{ r: 2.5, fill: "hsl(var(--primary))", fillOpacity: 0.42 }}
-                          strokeDasharray="4 4"
+                          name="Mood"
+                          stroke={ENERGY_METRIC_COLORS.Mood}
+                          strokeWidth={2.4}
+                          dot={{ r: 2.5, fill: ENERGY_METRIC_COLORS.Mood }}
+                          strokeDasharray="5 4"
+                          activeDot={{ r: 4 }}
                         />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1565,8 +1170,15 @@ function GamifiedStatsDashboard() {
               </Card>
             </section>
 
-            {/* RIGHT COLUMN */}
-            <section className="w-full md:w-72 lg:w-80 xl:w-[24rem] flex flex-col gap-4 md:gap-5 xl:gap-6">
+            {/* RIGHT COLUMN — Habits (XP, list, banner, habit calendar) */}
+            <section
+              className={[
+                "flex w-full flex-col gap-4 md:gap-5 xl:gap-6 md:w-72 lg:w-80 lg:shrink-0 xl:w-[24rem]",
+                mobileDashboardTab !== "habits" ? "max-lg:hidden" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               {/* XP Card */}
               <Card
                 className={[
@@ -1687,12 +1299,8 @@ function GamifiedStatsDashboard() {
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span
-                                  className={[
-                                    "flex items-center gap-1 font-mono text-[0.6rem] px-1.5 py-0.5 rounded-full",
-                                    habit.streak > 0
-                                      ? "bg-amber-900/40 text-amber-200"
-                                      : "bg-muted/80 text-muted-foreground",
-                                  ].join(" ")}
+                                  className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-mono text-[0.6rem] tabular-nums"
+                                  style={getStreakBadgeStyle(habit.streak)}
                                 >
                                   <Flame className="h-3 w-3" />
                                   {habit.streak}
@@ -1765,89 +1373,280 @@ function GamifiedStatsDashboard() {
                 </div>
               </Card>
 
-              {/* Stats Points Table */}
-              <Card className="border border-border/70 bg-card/90 shadow-sm">
-                <CardHeader className="px-4 pt-3 pb-2">
-                  <CardTitle className="text-sm">Stats Points</CardTitle>
+              {/* Habit Calendar */}
+              <Card className="flex flex-1 flex-col border border-border/70 bg-card/90 shadow-sm">
+                <CardHeader className="shrink-0 px-4 pt-3 pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <CalendarDays className="h-4 w-4 text-primary" />
+                    Habit Calendar
+                  </CardTitle>
                   <CardDescription className="text-xs">
-                    Current values for each attribute.
+                    Select a habit and tap a square to mark that day as done or undone.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="px-0 pb-3">
-                  <Table className="text-xs">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="pl-4">Area</TableHead>
-                        <TableHead className="text-right pr-4">
-                          Value
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pointsRows.map((row) => (
-                        <TableRow
-                          key={row.id}
-                          className="odd:bg-muted/40 hover:bg-muted/60"
-                        >
-                          <TableCell className="pl-4">
-                            {row.area}
-                          </TableCell>
-                          <TableCell className="text-right pr-4 font-medium">
-                            {row.value}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <CardContent className="flex flex-1 flex-col px-4 pb-4 pt-2 space-y-4">
+                  {habits.length > 0 ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        {habits.map((habit) => {
+                          const isSelected = selectedHabit?.id === habit.id;
+
+                          return (
+                            <button
+                              key={habit.id}
+                              type="button"
+                              onClick={() => setSelectedHabitId(habit.id)}
+                              className={[
+                                "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                isSelected
+                                  ? "border-primary bg-primary/10 text-foreground"
+                                  : "border-border/70 bg-muted/40 text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                              ].join(" ")}
+                              aria-label={`Select ${habit.name}`}
+                            >
+                              <span className="max-w-[11rem] truncate font-medium">
+                                {habit.name}
+                              </span>
+                              <span
+                                className="rounded-full border border-border/60 bg-background/80 px-1.5 py-0.5 text-[0.65rem] font-mono tabular-nums"
+                                style={getStreakTextStyle(habit.streak)}
+                              >
+                                {habit.streak}d
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {selectedHabit ? (
+                        <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/30 p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium">{selectedHabit.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Press a day square to toggle completion history for that habit.
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2 text-[0.7rem]">
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full border px-2 py-1 font-medium tabular-nums shadow-sm"
+                                style={getStreakBadgeStyle(selectedHabit.streak)}
+                              >
+                                <Flame className="h-3 w-3 shrink-0 opacity-90" />
+                                Streak {selectedHabit.streak}d
+                              </span>
+                              <Badge variant="outline" className="px-2 py-1 tabular-nums">
+                                {selectedHabitMonthCount} this month
+                              </Badge>
+                              <Badge variant="outline" className="px-2 py-1 tabular-nums">
+                                {selectedHabit.completedDates.length} total
+                              </Badge>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() =>
+                                setHabitCalendarMonth(
+                                  (current) =>
+                                    new Date(
+                                      current.getFullYear(),
+                                      current.getMonth() - 1,
+                                      1
+                                    )
+                                )
+                              }
+                              aria-label="Previous habit month"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <span className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                              {selectedHabitMonthLabel}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() =>
+                                setHabitCalendarMonth(
+                                  (current) =>
+                                    new Date(
+                                      current.getFullYear(),
+                                      current.getMonth() + 1,
+                                      1
+                                    )
+                                )
+                              }
+                              aria-label="Next habit month"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1 text-[0.65rem] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                            {weekDayLabels.map((dayLabel) => (
+                              <span
+                                key={dayLabel}
+                                className="flex h-7 items-center justify-center"
+                              >
+                                {dayLabel}
+                              </span>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1">
+                            {selectedHabitCalendarDays.map((day, index) => {
+                              if (!day) {
+                                return (
+                                  <div
+                                    key={`habit-empty-${index}`}
+                                    className="min-h-[3rem] rounded-lg border border-transparent"
+                                  />
+                                );
+                              }
+
+                              const isCompleted = selectedHabitCompletedDates.has(
+                                day.dateKey
+                              );
+                              const isCurrentDay =
+                                day.dateKey === todayJournalDateKey;
+
+                              return (
+                                <button
+                                  key={day.dateKey}
+                                  type="button"
+                                  onClick={() =>
+                                    toggleHabitDate(selectedHabit.id, day.dateKey)
+                                  }
+                                  className={[
+                                    "group flex min-h-[3rem] flex-col items-stretch justify-between gap-0.5 rounded-lg border p-1.5 text-center transition-all",
+                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                    isCompleted
+                                      ? "border-primary/80 bg-primary/12 shadow-sm"
+                                      : "border-border/60 bg-background/70 hover:border-primary/35 hover:bg-muted/40",
+                                    isCurrentDay
+                                      ? "ring-2 ring-primary/45 ring-offset-1 ring-offset-background"
+                                      : "",
+                                  ].join(" ")}
+                                  aria-label={`Toggle ${selectedHabit.name} on ${day.dateKey}`}
+                                >
+                                  <span
+                                    className={[
+                                      "tabular-nums text-[0.7rem] font-semibold leading-none",
+                                      isCurrentDay
+                                        ? "text-primary"
+                                        : "text-muted-foreground group-hover:text-foreground",
+                                    ].join(" ")}
+                                  >
+                                    {day.label}
+                                  </span>
+                                  <span className="flex min-h-[1.25rem] flex-1 items-center justify-center">
+                                    {isCompleted ? (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-md bg-primary text-[0.7rem] font-bold leading-none text-primary-foreground shadow-inner">
+                                        ✓
+                                      </span>
+                                    ) : (
+                                      <span className="h-5 w-5 rounded-md border border-dashed border-border/80 bg-muted/30 transition-colors group-hover:border-primary/50 group-hover:bg-muted/50" />
+                                    )}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/30 px-4 py-5 text-center">
+                      <p className="text-sm font-medium">No habits yet</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Add a habit above to start managing its calendar.
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </section>
           </div>
 
-          <section className="mt-6 xl:mt-8 grid gap-4 xl:gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base md:text-lg flex items-center gap-2">
-                      <BookOpenText className="h-4 w-4 text-primary" />
-                      Daily Journal
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Write today&apos;s page, earn 15 XP, and build a writing streak.
-                    </CardDescription>
+          <section
+            className={[
+              "mt-4 xl:mt-6 grid gap-4 lg:grid-cols-[1fr_0.85fr] lg:gap-5",
+              mobileDashboardTab !== "journal" ? "max-lg:hidden" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <Card className="overflow-hidden border border-border/70 bg-card/90 shadow-sm">
+              <CardHeader className="border-b border-border/60 bg-muted/15 px-4 py-4 md:px-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+                      <BookOpenText className="h-5 w-5 text-primary" />
+                    </span>
+                    <div className="min-w-0">
+                      <CardTitle className="text-base md:text-lg leading-tight">
+                        Daily Journal
+                      </CardTitle>
+                      <CardDescription className="text-xs leading-snug line-clamp-2">
+                        Save to persist locally · XP on first save of the day.
+                      </CardDescription>
+                    </div>
                   </div>
-                  <Badge variant="outline" className="text-[0.7rem] px-2 py-1">
-                    Streak {journalStreak}d
-                  </Badge>
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs font-medium tabular-nums"
+                    style={getStreakBadgeStyle(journalStreak)}
+                  >
+                    <PenLine className="h-3.5 w-3.5 opacity-90" />
+                    {journalStreak}d
+                  </span>
                 </div>
               </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                <form className="space-y-3" onSubmit={saveJournalEntry}>
+              <CardContent className="grid gap-4 px-4 pb-4 pt-4 md:px-5 md:pb-5 lg:grid-cols-2 lg:gap-5">
+                <form
+                  className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-4 shadow-inner"
+                  onSubmit={saveJournalEntry}
+                >
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="text-[0.7rem] px-2 py-1">
+                    <Badge
+                      variant="outline"
+                      className={[
+                        "border-primary/30 bg-primary/5 px-2.5 py-0.5 text-xs",
+                        isEditingPastJournalEntry ? "" : "text-primary",
+                      ].join(" ")}
+                    >
                       {isEditingPastJournalEntry
-                        ? `Editing ${formatJournalDate(selectedJournalDate)}`
+                        ? `Edit ${formatJournalDate(selectedJournalDate)}`
                         : "Today"}
                     </Badge>
                     {selectedJournalDate !== todayJournalDateKey ? (
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="secondary"
                         size="sm"
                         className="h-8 px-3 text-xs"
                         onClick={() => {
                           setSelectedJournalDate(todayJournalDateKey);
                           const today = new Date();
-                          setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+                          setCalendarMonth(
+                            new Date(today.getFullYear(), today.getMonth(), 1)
+                          );
                         }}
                       >
-                        Back to today
+                        Today
                       </Button>
                     ) : null}
                   </div>
-                  <label className="block space-y-2">
-                    <span className="text-xs text-muted-foreground">Title</span>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Title
+                    </span>
                     <Input
                       value={journalForm.title}
                       onChange={(e) =>
@@ -1856,14 +1655,16 @@ function GamifiedStatsDashboard() {
                           title: e.target.value,
                         }))
                       }
-                      className="bg-background"
+                      className="h-10 border-border/80 bg-background text-sm focus-visible:ring-primary/25"
                       placeholder="What mattered today?"
                     />
                   </label>
-                  <label className="block space-y-2">
-                    <span className="text-xs text-muted-foreground">Entry</span>
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Entry
+                    </span>
                     <Textarea
-                      rows={8}
+                      rows={6}
                       value={journalForm.content}
                       onChange={(e) =>
                         setJournalForm((current) => ({
@@ -1871,101 +1672,113 @@ function GamifiedStatsDashboard() {
                           content: e.target.value,
                         }))
                       }
-                      className="bg-background"
-                      placeholder="Write the day, the feeling, and the lesson."
+                      onFocus={(e) => {
+                        e.target.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                      }}
+                      className="min-h-[7.5rem] resize-y border-border/80 bg-background text-sm leading-relaxed focus-visible:ring-primary/25"
+                      placeholder="A few lines are enough…"
                     />
                   </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button type="submit">
+                  <div className="flex flex-col gap-2 border-t border-border/50 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <Button type="submit" className="w-full sm:w-auto">
                       <PlusCircle className="h-4 w-4" />
-                      {isEditingPastJournalEntry ? "Update selected page" : "Save today&apos;s page"}
+                      {isEditingPastJournalEntry ? "Update" : "Save"}
                     </Button>
-                    <span className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground sm:text-right">
                       {isEditingPastJournalEntry
-                        ? "Editing a previous entry does not award XP again."
-                        : "Base reward: 15 XP + streak bonus"}
-                    </span>
+                        ? "No XP on past edits."
+                        : "15 XP + streak bonus on first save."}
+                    </p>
                   </div>
                 </form>
 
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">Previous pages</h3>
-                    <span className="text-xs text-muted-foreground">
-                      {recentJournalEntries.length} saved
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-border/50 pb-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Recent
+                    </h3>
+                    <span className="text-xs font-mono tabular-nums text-muted-foreground">
+                      {recentJournalEntries.length}
                     </span>
                   </div>
-                  <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                    {recentJournalEntries.map((entry) => (
-                      <article
-                        key={entry.id}
-                        className={[
-                          "rounded-2xl border px-3 py-3 transition-colors",
-                          selectedJournalDate === entry.dateKey
-                            ? "border-primary bg-primary/10"
-                            : "border-border/70 bg-muted/40",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">{entry.title}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatJournalDate(entry.createdAt)}
-                            </p>
+                  <div className="max-h-[18rem] space-y-2 overflow-y-auto pr-1">
+                    {recentJournalEntries.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-border/60 bg-muted/15 px-4 py-4 text-center">
+                        <p className="text-sm text-muted-foreground">No entries yet</p>
+                      </div>
+                    ) : (
+                      recentJournalEntries.map((entry) => (
+                        <article
+                          key={entry.id}
+                          className={[
+                            "rounded-xl border px-3 py-2.5 transition-colors",
+                            selectedJournalDate === entry.dateKey
+                              ? "border-primary/60 bg-primary/10"
+                              : "border-border/60 bg-muted/30 hover:bg-muted/45",
+                          ].join(" ")}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold">{entry.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatJournalDate(entry.createdAt)}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 gap-1">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="h-8 px-2.5 text-xs"
+                                onClick={() => openJournalEntry(entry.dateKey)}
+                              >
+                                Open
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteJournalEntry(entry.id)}
+                                aria-label={`Delete journal entry ${entry.title}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-3 text-xs"
-                              onClick={() => openJournalEntry(entry.dateKey)}
-                            >
-                              Open
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => deleteJournalEntry(entry.id)}
-                              aria-label={`Delete journal entry ${entry.title}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          {entry.content}
-                        </p>
-                      </article>
-                    ))}
+                          <p className="mt-1.5 text-xs leading-snug text-muted-foreground line-clamp-3">
+                            {entry.content}
+                          </p>
+                        </article>
+                      ))
+                    )}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base md:text-lg flex items-center gap-2">
-                      <CalendarDays className="h-4 w-4 text-primary" />
-                      Journal Calendar
-                    </CardTitle>
+              <CardHeader className="border-b border-border/60 px-4 py-3 md:px-5">
+                <div className="flex items-center gap-2.5">
+                  <CalendarDays className="h-5 w-5 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <CardTitle className="text-base md:text-lg">Calendar</CardTitle>
                     <CardDescription className="text-xs">
-                      Tap a day with an entry to reopen that page.
+                      Tap days with a dot to open.
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 space-y-4">
+              <CardContent className="space-y-3.5 px-4 pb-4 pt-3 md:px-5 md:pb-5">
                 <div className="flex items-center justify-between">
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-9 w-9"
                     onClick={() =>
                       setCalendarMonth(
                         new Date(
@@ -1979,14 +1792,14 @@ function GamifiedStatsDashboard() {
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <p className="text-sm font-semibold capitalize">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {calendarMonthLabel}
                   </p>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-9 w-9"
                     onClick={() =>
                       setCalendarMonth(
                         new Date(
@@ -2002,20 +1815,25 @@ function GamifiedStatsDashboard() {
                   </Button>
                 </div>
 
-                <div className="grid grid-cols-7 gap-2 text-center text-[0.7rem] uppercase tracking-[0.12em] text-muted-foreground">
-                  {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
-                    <span key={day}>{day}</span>
+                <div className="grid grid-cols-7 gap-0.5 text-center text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+                  {weekDayLabels.map((day) => (
+                    <span key={day} className="py-1">
+                      {day}
+                    </span>
                   ))}
                 </div>
 
-                <div className="grid grid-cols-7 gap-2">
+                <div className="grid grid-cols-7 gap-1.5">
                   {calendarDays.map((day, index) => {
                     if (!day) {
-                      return <div key={`empty-${index}`} className="h-11 rounded-xl bg-transparent" />;
+                      return <div key={`empty-${index}`} className="h-9 rounded-md bg-transparent sm:h-10" />;
                     }
 
-                    const hasEntry = journalEntries.some((entry) => entry.dateKey === day.dateKey);
+                    const hasEntry = journalEntries.some(
+                      (entry) => entry.dateKey === day.dateKey
+                    );
                     const isSelected = selectedJournalDate === day.dateKey;
+                    const isTodayCell = day.dateKey === todayJournalDateKey;
 
                     return (
                       <button
@@ -2024,38 +1842,59 @@ function GamifiedStatsDashboard() {
                         disabled={!hasEntry}
                         onClick={() => openJournalEntry(day.dateKey)}
                         className={[
-                          "h-11 rounded-xl border text-sm font-medium transition-colors",
+                          "relative flex h-9 flex-col items-center justify-center gap-0.5 rounded-md border text-xs font-semibold tabular-nums transition-all sm:h-10 sm:text-sm",
                           isSelected
-                            ? "border-primary bg-primary text-primary-foreground"
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm"
                             : hasEntry
-                            ? "border-border/70 bg-muted/50 hover:border-primary/60 hover:bg-muted"
-                            : "border-border/30 bg-background text-muted-foreground opacity-45",
+                              ? "border-border/70 bg-background/80 hover:border-primary/50 hover:bg-muted/60"
+                              : "cursor-not-allowed border-border/40 bg-muted/15 text-muted-foreground opacity-45",
+                          !isSelected && isTodayCell && hasEntry ? "ring-1 ring-primary/35" : "",
                         ].join(" ")}
                       >
                         {day.label}
+                        {hasEntry ? (
+                          <span
+                            className={[
+                              "h-1 w-1 rounded-full",
+                              isSelected ? "bg-primary-foreground/90" : "bg-primary/80",
+                            ].join(" ")}
+                          />
+                        ) : (
+                          <span className="h-1 w-1 rounded-full bg-transparent" />
+                        )}
                       </button>
                     );
                   })}
                 </div>
 
-                <div className="rounded-2xl border border-border/70 bg-muted/40 p-4">
+                <div
+                  className={[
+                    "rounded-xl border p-4 text-sm",
+                    selectedJournalEntry
+                      ? "border-primary/25 bg-primary/5"
+                      : "border-border/70 bg-muted/25",
+                  ].join(" ")}
+                >
                   {selectedJournalEntry ? (
-                    <div className="space-y-2">
-                      <div>
-                        <p className="text-sm font-semibold">
+                    <div className="space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold leading-tight">
                           {selectedJournalEntry.title}
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatJournalDate(selectedJournalEntry.createdAt)}
-                        </p>
+                        <Badge variant="outline" className="shrink-0 px-2 py-0.5 text-xs">
+                          Preview
+                        </Badge>
                       </div>
-                      <p className="text-sm leading-6">
+                      <p className="text-xs text-muted-foreground">
+                        {formatJournalDate(selectedJournalEntry.createdAt)}
+                      </p>
+                      <p className="line-clamp-5 text-sm leading-relaxed text-foreground/90">
                         {selectedJournalEntry.content}
                       </p>
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No journal page selected yet.
+                    <p className="text-center text-sm text-muted-foreground">
+                      Select a day with an entry, or save today.
                     </p>
                   )}
                 </div>
@@ -2132,7 +1971,7 @@ function GamifiedStatsDashboard() {
                 <div className="space-y-2">
                   <span className="text-xs text-muted-foreground block">Accent</span>
                   <div className="flex flex-wrap gap-2">
-                    {Object.keys(colorThemes).map((key) => (
+                    {themeColorKeys.map((key) => (
                       <button
                         key={key}
                         type="button"
@@ -2215,20 +2054,37 @@ function GamifiedStatsDashboard() {
           </section>
           )}
         </div>
+
+        {/* Mobile dashboard tab bar — only below lg; desktop shows full layout */}
+        {activePage === "dashboard" ? (
+          <nav
+            className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-background/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
+            aria-label="Dashboard sections"
+          >
+            <div className="mx-auto flex max-w-[1680px] items-stretch justify-around gap-1 px-2">
+              {[
+                { id: "character" as const, label: "Character", icon: User },
+                { id: "stats" as const, label: "Stats", icon: BarChart2 },
+                { id: "habits" as const, label: "Habits", icon: Target },
+                { id: "journal" as const, label: "Journal", icon: BookOpenText },
+              ].map(({ id, label, icon: Icon }) => (
+                <Button
+                  key={id}
+                  type="button"
+                  variant={mobileDashboardTab === id ? "default" : "ghost"}
+                  size="sm"
+                  className="flex h-auto min-w-0 flex-1 flex-col gap-0.5 py-2 px-1 text-[0.65rem] font-medium"
+                  onClick={() => setMobileDashboardTab(id)}
+                >
+                  <Icon className="mx-auto h-5 w-5 shrink-0" aria-hidden />
+                  <span className="truncate">{label}</span>
+                </Button>
+              ))}
+            </div>
+          </nav>
+        ) : null}
       </div>
     </TooltipProvider>
-  );
-}
-
-/* ---------- Progress Bar (kept simple) ---------- */
-function ProgressBar({ filled = 0 }) {
-  return (
-    <div className="h-2 w-full rounded-full bg-muted/50 relative overflow-hidden">
-      <span
-        className="absolute inset-y-0 left-0 bg-primary transition-all duration-700"
-        style={{ width: `${Math.min(100, filled)}%` }}
-      />
-    </div>
   );
 }
 
