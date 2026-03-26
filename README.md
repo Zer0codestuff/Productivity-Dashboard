@@ -103,22 +103,7 @@ npm run dev
 npm run build
 ```
 
-La cartella `dist/` risultante puo essere deployata come sito statico.
-
-## Deploy
-
-### Vercel
-
-1. importa il repository
-2. framework preset: `Vite`
-3. build command: `npm run build`
-4. output directory: `dist`
-
-### Netlify
-
-1. importa il repository
-2. build command: `npm run build`
-3. publish directory: `dist`
+La build produce la cartella `dist/` con i file ottimizzati per la produzione.
 
 ## Dove Mettere Le Mani
 
