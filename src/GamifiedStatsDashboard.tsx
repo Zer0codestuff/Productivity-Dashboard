@@ -1,5 +1,4 @@
-
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useRef } from "react";
 import {
   Badge,
   Button,
@@ -40,592 +39,120 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Download,
   Flame,
-  Heart,
   LayoutDashboard,
   LineChart as LineChartIcon,
-  Minus,
   Palette,
   PenLine,
-  Plus,
   PlusCircle,
   Settings,
   Target,
   Trash2,
   Upload,
-  User,
-  Zap,
 } from "lucide-react";
 import {
-  buildCalendarDays,
-  calculateHabitStreak,
-  calculateJournalStreak,
   colorThemes,
-  createExportSnapshot,
   formatJournalDate,
-  getJournalXpBonus,
-  getSeasonArcIcon,
-  getSeasonArcLabel,
   isToday,
-  parseDateInput,
-  readStoredDashboardData,
-  sanitizeDashboardSnapshot,
-  syncTodayHistory,
-  toDateKey,
-  writeStoredDashboardData,
-  type DashboardData,
 } from "./features/dashboard/dashboard-data";
-
-const energyIconMap = {
-  Willpower: Zap,
-  Health: Heart,
-  Mood: Flame,
-};
-
-/** Willpower = giallo, Health = rosso, Mood = arancione (stesso schema nel grafico). */
-const ENERGY_METRIC_COLORS: Record<string, string> = {
-  Willpower: "#facc15",
-  Health: "#ef4444",
-  Mood: "#f97316",
-};
-const themeColorKeys = Object.keys(colorThemes) as Array<keyof typeof colorThemes>;
-const weekDayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-/** Streak 0 = muted; da 1 in su arancione che tende al rosso all'aumentare dello streak (hue ~32 → 0). */
-function getStreakTextStyle(streak: number): React.CSSProperties {
-  if (streak <= 0) {
-    return { color: "hsl(var(--muted-foreground))" };
-  }
-  const t = Math.min(streak / 20, 1);
-  const hue = 32 - t * 32;
-  return { color: `hsl(${hue} 88% 54%)` };
-}
-
-function getStreakBadgeStyle(streak: number): React.CSSProperties {
-  if (streak <= 0) {
-    return {
-      backgroundColor: "hsl(var(--muted) / 0.5)",
-      color: "hsl(var(--muted-foreground))",
-      borderColor: "hsl(var(--border))",
-    };
-  }
-  const t = Math.min(streak / 20, 1);
-  const hue = 32 - t * 32;
-  return {
-    backgroundColor: `hsl(${hue} 45% 18%)`,
-    color: `hsl(${hue} 92% 88%)`,
-    borderColor: `hsl(${hue} 55% 35%)`,
-  };
-}
-
-function StepperControl({
-  value,
-  min,
-  max,
-  step = 1,
-  onChange,
-  ariaLabel,
-  compact = false,
-}) {
-  /** Touch-friendly on small screens; compact size from `sm` up (44px min tap target on mobile). */
-  const buttonSize = compact
-    ? "h-11 w-11 min-h-[44px] min-w-[44px] sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0"
-    : "h-11 w-11 min-h-[44px] min-w-[44px] sm:h-9 sm:w-9 sm:min-h-0 sm:min-w-0";
-  const valueClass = compact ? "min-w-[2.5rem] text-xs" : "min-w-[3rem] text-sm";
-
-  return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-1 py-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className={`${buttonSize} rounded-full`}
-        onClick={() => onChange(clamp(value - step, min, max))}
-        aria-label={`Decrease ${ariaLabel}`}
-      >
-        <Minus className="h-4 w-4" />
-      </Button>
-      <span className={`${valueClass} text-center font-medium tabular-nums`}>
-        {value}
-      </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className={`${buttonSize} rounded-full`}
-        onClick={() => onChange(clamp(value + step, min, max))}
-        aria-label={`Increase ${ariaLabel}`}
-      >
-        <Plus className="h-4 w-4" />
-      </Button>
-    </div>
-  );
-}
+import { DashboardSettingsSection } from "./features/dashboard/DashboardSettingsSection";
+import {
+  DashboardCharacterColumn,
+  DashboardHabitsColumn,
+  DashboardHeader,
+  DashboardJournalSection,
+  DashboardStatsColumn,
+} from "./features/dashboard/DashboardSections";
+import { useDashboardState } from "./features/dashboard/useDashboardState";
+import {
+  DashboardMobileNav,
+  StepperControl,
+} from "./features/dashboard/dashboard-ui";
+import {
+  ENERGY_METRIC_COLORS,
+  energyIconMap,
+  getStreakBadgeStyle,
+  getStreakTextStyle,
+  themeColorKeys,
+  weekDayLabels,
+} from "./features/dashboard/dashboard-display";
 
 /* ---------- Main Component ---------- */
 function GamifiedStatsDashboard() {
   const fileInputRef = useRef(null);
   const importInputRef = useRef(null);
-  const [initialData] = useState(() => readStoredDashboardData());
-
-  // Core progression state
-  const [level, setLevel] = useState(initialData.level);
-  const [xp, setXp] = useState(initialData.xp);
-  const [xpToNext, setXpToNext] = useState(initialData.xpToNext);
-  const [xpInput, setXpInput] = useState("");
-  const [levelUpFlash, setLevelUpFlash] = useState(false);
-
-  // Avatar
-  const [avatarSrc, setAvatarSrc] = useState(initialData.avatarSrc);
-  const [profileName, setProfileName] = useState(initialData.profileName);
-  const [activePage, setActivePage] = useState("dashboard");
-  /** Mobile-only: which dashboard region is visible below `lg` (desktop shows all). */
-  const [mobileDashboardTab, setMobileDashboardTab] = useState<
-    "character" | "stats" | "habits" | "journal"
-  >("character");
-  const [themeMode, setThemeMode] = useState(initialData.themeMode);
-
-  // Radar stats
-  const [radarStats, setRadarStats] = useState(initialData.radarStats);
-  const [newStatName, setNewStatName] = useState("");
-  const [newStatVal, setNewStatVal] = useState("");
-
-  // Daily energy
-  const [energy, setEnergy] = useState(initialData.energy);
-  const [energyHistory, setEnergyHistory] = useState(initialData.energyHistory);
-
-  // Motivation phrase
-  const [motivation, setMotivation] = useState(initialData.motivation);
-
-  const [isEditingArc, setIsEditingArc] = useState(false);
-  const seasonArcLabel = getSeasonArcLabel(new Date());
-  const SeasonArcIcon = getSeasonArcIcon(new Date());
-  const isLightMode = themeMode === "light";
-
-  // Theme accent
-  const [primaryColorKey, setPrimaryColorKey] = useState(initialData.primaryColorKey);
-
-  // Habit tracker
-  const [habits, setHabits] = useState(initialData.habits);
-  const [newHabitName, setNewHabitName] = useState("");
-  const [selectedHabitId, setSelectedHabitId] = useState(
-    () => initialData.habits[0]?.id ?? null
-  );
-  const [habitCalendarMonth, setHabitCalendarMonth] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
-  const [journalEntries, setJournalEntries] = useState(initialData.journalEntries);
-  const [journalRewardedDates, setJournalRewardedDates] = useState(
-    initialData.journalRewardedDates
-  );
-  const [journalForm, setJournalForm] = useState({
-    title: "",
-    content: "",
-  });
-  const [calendarMonth, setCalendarMonth] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
-  const [selectedJournalDate, setSelectedJournalDate] = useState(() =>
-    toDateKey(new Date())
-  );
-  const dashboardData = useMemo(
-    () =>
-      ({
-        profileName,
-        avatarSrc,
-        themeMode,
-        primaryColorKey,
-        level,
-        xp,
-        xpToNext,
-        radarStats,
-        energy,
-        energyHistory,
-        motivation,
-        habits,
-        journalEntries,
-        journalRewardedDates,
-      }) satisfies DashboardData,
-    [
-      avatarSrc,
-      energy,
-      energyHistory,
-      habits,
-      journalEntries,
-      journalRewardedDates,
-      level,
-      motivation,
-      primaryColorKey,
-      profileName,
-      radarStats,
-      themeMode,
-      xp,
-      xpToNext,
-    ]
-  );
-
-  /* ---------- Effects ---------- */
-
-  // Apply theme accent to CSS variables
-  useEffect(() => {
-    const root = document.documentElement;
-    const theme = colorThemes[primaryColorKey];
-    if (theme) {
-      root.style.setProperty("--primary", theme.primary);
-      root.style.setProperty("--primary-foreground", theme.primaryForeground);
-    }
-  }, [primaryColorKey]);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.theme = themeMode;
-  }, [themeMode]);
-
-  // Optional: simple flash for level up (hook only; logic calls setLevelUpFlash)
-  useEffect(() => {
-    if (!levelUpFlash) return;
-    const timeout = setTimeout(() => setLevelUpFlash(false), 500);
-    return () => clearTimeout(timeout);
-  }, [levelUpFlash]);
-
-  useEffect(() => {
-    setEnergyHistory((current) =>
-      syncTodayHistory(
-        current,
-        energy.map(({ key, value }) => ({ key, value }))
-      )
-    );
-  }, [energy]);
-
-  useEffect(() => {
-    const selectedEntry =
-      journalEntries.find((entry) => entry.dateKey === selectedJournalDate) ?? null;
-
-    if (selectedEntry) {
-      setJournalForm({
-        title: selectedEntry.title,
-        content: selectedEntry.content,
-      });
-      return;
-    }
-
-    setJournalForm({ title: "", content: "" });
-  }, [journalEntries, selectedJournalDate]);
-
-  useEffect(() => {
-    writeStoredDashboardData(dashboardData);
-  }, [dashboardData]);
-
-  /* ---------- XP Logic ---------- */
-
-  const gainExperience = (amount) => {
-    if (isNaN(amount) || amount <= 0) return;
-    const currentXp = xp;
-    let currentLevel = level;
-    let threshold = xpToNext;
-
-    let nextXp = currentXp + amount;
-    let leveledUp = false;
-
-    while (nextXp >= threshold) {
-      nextXp -= threshold;
-      currentLevel += 1;
-      threshold = Math.round(threshold * 1.1);
-      leveledUp = true;
-    }
-
-    setXp(nextXp);
-    setLevel(currentLevel);
-    setXpToNext(threshold);
-    if (leveledUp) {
-      setLevelUpFlash(true);
-    }
-  };
-
-  const gainXpFromInput = (event) => {
-    event.preventDefault();
-    const delta = parseInt(xpInput, 10);
-    gainExperience(delta);
-    setXpInput("");
-  };
-
-  /* ---------- Handlers ---------- */
-
-  const handleAvatarChange = (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarSrc(reader.result?.toString() || avatarSrc);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const exportData = () => {
-    const snapshot = createExportSnapshot(dashboardData);
-
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "dashboard-settings-export.json";
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const importData = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = sanitizeDashboardSnapshot(JSON.parse(String(reader.result)));
-        setProfileName(parsed.profileName);
-        setAvatarSrc(parsed.avatarSrc);
-        setThemeMode(parsed.themeMode);
-        setPrimaryColorKey(parsed.primaryColorKey);
-        setLevel(parsed.level);
-        setXp(parsed.xp);
-        setXpToNext(parsed.xpToNext);
-        setRadarStats(parsed.radarStats);
-        setEnergy(parsed.energy);
-        setEnergyHistory(parsed.energyHistory);
-        setMotivation(parsed.motivation);
-        setHabits(parsed.habits);
-        setSelectedHabitId(parsed.habits[0]?.id ?? null);
-        setJournalEntries(parsed.journalEntries);
-        setJournalRewardedDates(parsed.journalRewardedDates);
-        const todayKey = toDateKey(new Date());
-        const importedSelectedDate = parsed.journalEntries.some((entry) => entry.dateKey === todayKey)
-          ? todayKey
-          : parsed.journalEntries[0]?.dateKey ?? todayKey;
-        setSelectedJournalDate(importedSelectedDate);
-        const monthDate = parseDateInput(importedSelectedDate) ?? new Date();
-        setCalendarMonth(new Date(monthDate.getFullYear(), monthDate.getMonth(), 1));
-      } catch {
-        // Keep the current state if the file is invalid.
-      }
-    };
-    reader.readAsText(file);
-    event.target.value = "";
-  };
-
-  const removeStat = (id) => {
-    setRadarStats((prev) => prev.filter((stat) => stat.id !== id));
-  };
-
-  const addStat = (event) => {
-    event.preventDefault();
-    const value = parseInt(newStatVal, 10);
-    if (!newStatName.trim() || isNaN(value) || value < 0 || value > 100) {
-      return;
-    }
-    setRadarStats((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        area: newStatName.trim(),
-        value,
-      },
-    ]);
-    setNewStatName("");
-    setNewStatVal("");
-  };
-
-  const nudgeEnergy = (index, nextValue) => {
-    setEnergy((prev) =>
-      prev.map((entry, i) => (i === index ? { ...entry, value: nextValue } : entry))
-    );
-  };
-
-  const nudgeRadarVal = (id, nextValue) => {
-    setRadarStats((prev) =>
-      prev.map((stat) => (stat.id === id ? { ...stat, value: nextValue } : stat))
-    );
-  };
-
-  const addHabit = (event) => {
-    event.preventDefault();
-    const name = newHabitName.trim();
-    if (!name) return;
-    const newHabit = {
-      id: Date.now(),
-      name,
-      streak: 0,
-      lastCompleted: null,
-      completedDates: [],
-    };
-    setHabits((prev) => [...prev, newHabit]);
-    setSelectedHabitId((current) => current ?? newHabit.id);
-    setNewHabitName("");
-  };
-
-  const toggleHabitDate = (id, dateInput) => {
-    const targetDateKey = toDateKey(dateInput);
-    if (!targetDateKey) return;
-
-    const todayKey = toDateKey(new Date());
-    const targetHabit = habits.find((habit) => habit.id === id);
-    if (!targetHabit) return;
-
-    const shouldAwardXp =
-      targetDateKey === todayKey &&
-      !targetHabit.completedDates?.includes(targetDateKey);
-
-    setHabits((prev) =>
-      prev.map((habit) => {
-        if (habit.id !== id) return habit;
-
-        const completedDatesSet = new Set(habit.completedDates ?? []);
-        if (completedDatesSet.has(targetDateKey)) {
-          completedDatesSet.delete(targetDateKey);
-        } else {
-          completedDatesSet.add(targetDateKey);
-        }
-
-        const completedDates = [...completedDatesSet].sort();
-        const lastCompleted = completedDates.length > 0
-          ? (parseDateInput(completedDates[completedDates.length - 1]) ?? new Date()).toISOString()
-          : null;
-
-        return {
-          ...habit,
-          completedDates,
-          streak: calculateHabitStreak(completedDates),
-          lastCompleted,
-        };
-      })
-    );
-
-    if (shouldAwardXp) {
-      gainExperience(5);
-    }
-  };
-
-  const toggleHabitCompletion = (id) => {
-    toggleHabitDate(id, new Date());
-  };
-
-  const deleteHabit = (id) => {
-    const remainingHabits = habits.filter((habit) => habit.id !== id);
-    setHabits(remainingHabits);
-    if (selectedHabitId === id) {
-      setSelectedHabitId(remainingHabits[0]?.id ?? null);
-    }
-  };
-
-  const saveJournalEntry = (event) => {
-    event.preventDefault();
-
-    const title = journalForm.title.trim();
-    const content = journalForm.content.trim();
-    if (!title || !content) return;
-
-    const now = new Date();
-    const todayKey = toDateKey(now);
-    const targetDateKey = selectedJournalDate || todayKey;
-
-    setJournalEntries((prev) => {
-      const existingEntry = prev.find((entry) => entry.dateKey === targetDateKey);
-
-      if (existingEntry) {
-        return prev.map((entry) =>
-          entry.dateKey === targetDateKey
-            ? {
-                ...entry,
-                title,
-                content,
-                createdAt: now.toISOString(),
-              }
-            : entry
-        );
-      }
-
-      const nextEntry = {
-        id: Date.now(),
-        dateKey: targetDateKey,
-        createdAt: now.toISOString(),
-        title,
-        content,
-      };
-      const nextEntries = [nextEntry, ...prev].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-
-      queueMicrotask(() => {
-        setJournalRewardedDates((rewarded) => {
-          if (rewarded.includes(targetDateKey)) return rewarded;
-          const streak = calculateJournalStreak(nextEntries);
-          gainExperience(15 + getJournalXpBonus(streak));
-          return [...new Set([...rewarded, targetDateKey])].sort();
-        });
-      });
-
-      return nextEntries;
-    });
-
-    const monthDate = parseDateInput(targetDateKey) ?? now;
-    setSelectedJournalDate(targetDateKey);
-    setCalendarMonth(new Date(monthDate.getFullYear(), monthDate.getMonth(), 1));
-  };
-
-  const openJournalEntry = (dateKey) => {
-    setSelectedJournalDate(dateKey);
-    const monthDate = parseDateInput(dateKey) ?? new Date();
-    setCalendarMonth(new Date(monthDate.getFullYear(), monthDate.getMonth(), 1));
-  };
-
-  const deleteJournalEntry = (id) => {
-    const targetEntry = journalEntries.find((entry) => entry.id === id);
-    setJournalEntries((prev) => prev.filter((entry) => entry.id !== id));
-    const todayKey = toDateKey(new Date());
-    const fallbackDateKey =
-      targetEntry?.dateKey === selectedJournalDate
-        ? journalEntries.find((entry) => entry.id !== id)?.dateKey ?? todayKey
-        : selectedJournalDate;
-    setSelectedJournalDate(fallbackDateKey);
-    const monthDate = parseDateInput(fallbackDateKey) ?? new Date();
-    setCalendarMonth(new Date(monthDate.getFullYear(), monthDate.getMonth(), 1));
-    if (fallbackDateKey === todayKey) {
-      setJournalForm({ title: "", content: "" });
-    }
-  };
-
-  /* ---------- Derived Data ---------- */
-
-  const todayJournalDateKey = toDateKey(new Date());
-  const selectedHabit =
-    habits.find((habit) => habit.id === selectedHabitId) ?? habits[0] ?? null;
-  const selectedHabitCompletedDates = new Set(selectedHabit?.completedDates ?? []);
-  const selectedHabitCalendarDays = buildCalendarDays(habitCalendarMonth);
-  const selectedHabitMonthLabel = habitCalendarMonth.toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric",
-  });
-  const selectedHabitMonthCount = selectedHabitCalendarDays.filter(
-    (day) => day && selectedHabitCompletedDates.has(day.dateKey)
-  ).length;
-  const recentJournalEntries = [...journalEntries].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  const journalStreak = calculateJournalStreak(journalEntries);
-  const selectedJournalEntry =
-    journalEntries.find((entry) => entry.dateKey === selectedJournalDate) ?? null;
-  const isEditingPastJournalEntry =
-    selectedJournalDate !== todayJournalDateKey && selectedJournalEntry?.dateKey === selectedJournalDate;
-  const calendarDays = buildCalendarDays(calendarMonth);
-  const calendarMonthLabel = calendarMonth.toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric",
-  });
+  const {
+    activePage,
+    addHabit,
+    addStat,
+    avatarSrc,
+    calendarDays,
+    calendarMonth,
+    calendarMonthLabel,
+    deleteHabit,
+    deleteJournalEntry,
+    energy,
+    energyHistory,
+    exportData,
+    gainXpFromInput,
+    habits,
+    handleAvatarChange,
+    importData,
+    isEditingArc,
+    isEditingPastJournalEntry,
+    isLightMode,
+    journalEntries,
+    journalForm,
+    journalStreak,
+    level,
+    levelUpFlash,
+    mobileDashboardTab,
+    motivation,
+    newHabitName,
+    newStatName,
+    newStatVal,
+    nudgeEnergy,
+    nudgeRadarVal,
+    openJournalEntry,
+    primaryColorKey,
+    profileName,
+    radarStats,
+    recentJournalEntries,
+    removeStat,
+    saveJournalEntry,
+    SeasonArcIcon,
+    seasonArcLabel,
+    selectedHabit,
+    selectedHabitCalendarDays,
+    selectedHabitCompletedDates,
+    selectedHabitMonthCount,
+    selectedHabitMonthLabel,
+    selectedJournalDate,
+    selectedJournalEntry,
+    setActivePage,
+    setCalendarMonth,
+    setHabitCalendarMonth,
+    setIsEditingArc,
+    setJournalForm,
+    setMobileDashboardTab,
+    setMotivation,
+    setNewHabitName,
+    setNewStatName,
+    setNewStatVal,
+    setPrimaryColorKey,
+    setProfileName,
+    setSelectedHabitId,
+    setSelectedJournalDate,
+    setThemeMode,
+    themeMode,
+    todayJournalDateKey,
+    toggleHabitCompletion,
+    toggleHabitDate,
+    xp,
+    xpInput,
+    xpToNext,
+    setXpInput,
+  } = useDashboardState();
 
   /* ---------- JSX ---------- */
 
@@ -648,39 +175,11 @@ function GamifiedStatsDashboard() {
             .filter(Boolean)
             .join(" ")}
         >
-          {/* Top title / breadcrumb */}
-          <div className="mb-4 flex flex-col gap-4 max-[479px]:items-stretch md:mb-6 min-[480px]:flex-row min-[480px]:items-start min-[480px]:justify-between">
-            <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold tracking-tight md:text-2xl xl:text-3xl">
-                {`${profileName}'s Dashboard`}
-              </h1>
-              <p className="text-xs md:text-sm text-muted-foreground">
-                Track your stats, habits, and level up your character.
-              </p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 max-[479px]:justify-between min-[480px]:w-auto">
-              <Button
-                type="button"
-                variant={activePage === "dashboard" ? "default" : "ghost"}
-                size="sm"
-                className="h-8 px-3 text-xs"
-                onClick={() => setActivePage("dashboard")}
-              >
-                <LayoutDashboard className="h-3.5 w-3.5" />
-                Dashboard
-              </Button>
-              <Button
-                type="button"
-                variant={activePage === "settings" ? "default" : "ghost"}
-                size="sm"
-                className="h-8 px-3 text-xs"
-                onClick={() => setActivePage("settings")}
-              >
-                <Settings className="h-3.5 w-3.5" />
-                Settings
-              </Button>
-            </div>
-          </div>
+          <DashboardHeader
+            activePage={activePage}
+            profileName={profileName}
+            setActivePage={setActivePage}
+          />
 
           {activePage === "dashboard" ? (
           <>
@@ -1903,185 +1402,29 @@ function GamifiedStatsDashboard() {
           </section>
           </>
           ) : (
-          <section className="grid gap-4 md:grid-cols-2">
-            <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <CardTitle className="text-base">Profile Settings</CardTitle>
-                <CardDescription className="text-xs">
-                  Update your main identity details.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 space-y-4">
-                <label className="space-y-2 block">
-                  <span className="text-xs text-muted-foreground">Display name</span>
-                  <Input
-                    value={profileName}
-                    onChange={(e) => setProfileName(e.target.value.slice(0, 32))}
-                    className="bg-background"
-                    placeholder="Your name"
-                  />
-                </label>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={avatarSrc}
-                    alt="Profile preview"
-                    className="h-16 w-16 rounded-xl object-cover border border-border/70"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4" />
-                    Change Photo
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <CardTitle className="text-base">Appearance</CardTitle>
-                <CardDescription className="text-xs">
-                  Choose global mode and accent.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 space-y-4">
-                <div className="space-y-2">
-                  <span className="text-xs text-muted-foreground block">Mode</span>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={themeMode === "dark" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setThemeMode("dark")}
-                    >
-                      Dark
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={themeMode === "light" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setThemeMode("light")}
-                    >
-                      Light
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <span className="text-xs text-muted-foreground block">Accent</span>
-                  <div className="flex flex-wrap gap-2">
-                    {themeColorKeys.map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setPrimaryColorKey(key)}
-                        className={[
-                          "relative flex h-8 w-8 items-center justify-center rounded-full border transition-all",
-                          primaryColorKey === key
-                            ? "border-primary ring-2 ring-primary/60"
-                            : "border-border/70 hover:border-primary/60",
-                        ].join(" ")}
-                        aria-label={`Use ${key} accent`}
-                      >
-                        <span
-                          className="h-5 w-5 rounded-full"
-                          style={{ backgroundColor: `hsl(${colorThemes[key].primary})` }}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <CardTitle className="text-base">Data</CardTitle>
-                <CardDescription className="text-xs">
-                  Export or import your current dashboard data.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 space-y-3">
-                <Button type="button" variant="secondary" onClick={exportData}>
-                  <Download className="h-4 w-4" />
-                  Export Data
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => importInputRef.current?.click()}
-                >
-                  <Upload className="h-4 w-4" />
-                  Import Data
-                </Button>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json"
-                  className="hidden"
-                  onChange={importData}
-                />
-              </CardContent>
-            </Card>
-
-            <Card className="border border-border/70 bg-card/90 shadow-sm">
-              <CardHeader className="px-4 pt-4 pb-2">
-                <CardTitle className="text-base">Quick Summary</CardTitle>
-                <CardDescription className="text-xs">
-                  Main settings currently in use.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 pt-2 space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Name</span>
-                  <strong>{profileName}</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Theme mode</span>
-                  <strong className="capitalize">{themeMode}</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Accent</span>
-                  <strong className="capitalize">{primaryColorKey}</strong>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Habits tracked</span>
-                  <strong>{habits.length}</strong>
-                </div>
-              </CardContent>
-            </Card>
-          </section>
+          <DashboardSettingsSection
+            avatarSrc={avatarSrc}
+            profileName={profileName}
+            themeMode={themeMode}
+            primaryColorKey={primaryColorKey}
+            habitsCount={habits.length}
+            fileInputRef={fileInputRef}
+            importInputRef={importInputRef}
+            setProfileName={setProfileName}
+            setThemeMode={setThemeMode}
+            setPrimaryColorKey={setPrimaryColorKey}
+            exportData={exportData}
+            importData={importData}
+          />
           )}
         </div>
 
         {/* Mobile dashboard tab bar — only below lg; desktop shows full layout */}
         {activePage === "dashboard" ? (
-          <nav
-            className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-background/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
-            aria-label="Dashboard sections"
-          >
-            <div className="mx-auto flex max-w-[1680px] items-stretch justify-around gap-1 px-2">
-              {[
-                { id: "character" as const, label: "Character", icon: User },
-                { id: "stats" as const, label: "Stats", icon: BarChart2 },
-                { id: "habits" as const, label: "Habits", icon: Target },
-                { id: "journal" as const, label: "Journal", icon: BookOpenText },
-              ].map(({ id, label, icon: Icon }) => (
-                <Button
-                  key={id}
-                  type="button"
-                  variant={mobileDashboardTab === id ? "default" : "ghost"}
-                  size="sm"
-                  className="flex h-auto min-w-0 flex-1 flex-col gap-0.5 py-2 px-1 text-[0.65rem] font-medium"
-                  onClick={() => setMobileDashboardTab(id)}
-                >
-                  <Icon className="mx-auto h-5 w-5 shrink-0" aria-hidden />
-                  <span className="truncate">{label}</span>
-                </Button>
-              ))}
-            </div>
-          </nav>
+          <DashboardMobileNav
+            activeTab={mobileDashboardTab}
+            onTabChange={setMobileDashboardTab}
+          />
         ) : null}
       </div>
     </TooltipProvider>
@@ -2089,5 +1432,3 @@ function GamifiedStatsDashboard() {
 }
 
 export default GamifiedStatsDashboard;
-
-

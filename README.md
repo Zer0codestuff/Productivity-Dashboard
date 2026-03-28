@@ -1,119 +1,68 @@
-# Productivity Dashboard
+# Momentum Journal
 
-A gamified dashboard to track progress, habits, daily energy, and personal journaling in a single React interface.
+A gamified personal dashboard for habits, energy tracking, XP progression, and journaling.
 
 ![Site screenshot](./Screenshot%202026-03-19%20at%2017-13-00%20Momentum%20Journal.png)
 
-## What it does
+## What it includes
 
-The project brings together several productivity blocks in one visual layout:
-
-- profile with customizable name and image
+- profile name and avatar
 - character stats with a radar chart
-- daily energy with recent history
-- habit tracker with streaks and XP
-- daily journal with calendar and history
-- `Settings` page for theme, accent, profile, and data export/import
+- daily energy controls with recent-history chart
+- habit tracking with streaks and a calendar view
+- journal entries with daily XP rewards
+- settings for theme mode, accent color, export, and import
 
-The UI is kept compact but game-like, with a consistent look in both dark and light mode.
+## Current structure
 
-## Structure
+The live application is centered on a single dashboard flow:
 
-The app’s main surface area lives here:
+- `src/App.tsx` mounts the application shell
+- `src/GamifiedStatsDashboard.tsx` contains the main dashboard and settings UI
+- `src/features/dashboard/dashboard-data.ts` contains persistence, sanitization, streak, calendar, and export/import helpers
+- `src/ui-compat.tsx` contains lightweight UI wrappers used by the dashboard
+- `src/styles.css` defines global theme tokens and base page styles
 
-- `src/GamifiedStatsDashboard.tsx`
+## Persistence
 
-Supporting files and docs:
-
-- `src/App.tsx` mounts the main dashboard
-- `src/main.tsx` bootstraps React
-- `src/styles.css` defines theme tokens, global colors, and dark/light mode
-- `src/ui-compat.tsx` provides lightweight UI primitives used in the layout
-- `project.md` is a deeper project map for AI-assisted review or quick orientation
-
-## Features
-
-### Dashboard
-
-The main page uses a responsive three-column layout:
-
-- left: profile, daily energy, accent, stat editing
-- center: radar chart, seasonal phrase, daily energy chart
-- right: XP, habits, banner, stats table
-
-### Settings
-
-Settings cover the main configuration:
-
-- change display name
-- change profile photo
-- light or dark theme
-- accent color
-- export data
-- import data
-
-### Journal
-
-The daily journal lets you:
-
-- write today’s entry
-- browse previous days
-- use a calendar to open a specific day
-- earn XP when you write
-- get extra streak bonuses
-
-## Data and persistence
-
-The dashboard state is saved automatically to `localStorage`, not only via manual export/import.
+State is stored locally in `localStorage` and can also be exported as JSON.
 
 Persisted data includes:
 
-- profile
-- theme
-- accent
-- XP and level
+- profile name and avatar
+- theme mode and accent
+- XP progression
 - radar stats
-- daily energy
-- energy history
-- habits
+- daily energy and history
+- habits and streak history
 - journal entries
-- journal days already rewarded for XP
+- rewarded journal dates
 
-Export still produces a full JSON snapshot, useful for backup or migration.
-
-## Tech stack
+## Tech
 
 - React
 - TypeScript
 - Vite
 - Recharts
 - Lucide React
-- Global CSS variables
+- Tailwind utility classes via CDN config in `index.html`
 
-## Local development
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Production build
+## Build
 
 ```bash
 npm run build
 ```
 
-The build outputs an optimized `dist/` folder.
+## Main edit points
 
-## Where to edit
-
-Typical touchpoints:
-
-- main UI and logic: `src/GamifiedStatsDashboard.tsx`
-- global colors and light/dark mode: `src/styles.css`
-- base UI components: `src/ui-compat.tsx`
-- project overview: `project.md`
-
-## Note
-
-The main UI is rendered directly from `src/GamifiedStatsDashboard.tsx`, with a small compatibility layer so the original design can run without a full rewrite.
+- dashboard behavior and UI: `src/GamifiedStatsDashboard.tsx`
+- data model and persistence rules: `src/features/dashboard/dashboard-data.ts`
+- UI wrappers: `src/ui-compat.tsx`
+- theme variables: `src/styles.css`
